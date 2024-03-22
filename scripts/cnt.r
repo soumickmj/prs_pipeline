@@ -15,10 +15,10 @@ option_list = list(
   make_option(c('--cov_PC'), action='store', type='character', help=".rds file containing the principal components of the genotype. If supplied, this will be used during the training of the sparse linear regression model.", default = "/project/ukbblatent/clinicaldata/v1.1.0_seventh_basket/genPC_82779_MD_01_03_2024_00_05_30.tsv"),
   make_option(c('--cov_nPC'), action='store', type='numeric', help='Number of PCs to include from the supplied cov_PC (Default: 20, same as the PLR code]', default=20),
   make_option(c('--subs2include'), action='store', type='character', help='txt file (or, output of plink) with FID and IID columns (tab-separated), containing subjects to include (typically used for relatedness filtering)', default='/group/glastonbury/soumick/PRS/inputs/F20208v3_DiffAE_select_latents_r80_discov_INF30/king_cutoff_0p0625_cond_plus_plink_maf1p_geno10p_caucasian_prune_250_5_r0p5_ukbb_autosomes_mac100_info0p4.king.cutoff.in.id'),
-  make_option(c('-o', '--output'), action='store', type='character', help='output prefix [required]', default="/group/glastonbury/soumick/PRS/CnT/initial_test_extGWAS_S1701_Z49"),
-  make_option(c('--tophits'), action='store', type='double', help='Number (if the provided value is greater than 1) or percentage (of total number of SNPs) of GWAS tophits will be utilised for the main model. Orignal PLR code uses 100e3 (out of 656e3, i.e. 15.24%)', default = 100e3),
-  make_option(c('--ext_sumstats'), action='store', type='character', help='Path to external sumstats. In this case, GWAS will not be performed and the top SNPs from the sumstats will be considered', default = '/group/glastonbury/GWAS/F20208v3_DiffAE/select_latents_r80/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/results/gwas/S1701_Z49.gwas.regenie.gz'),
-  make_option(c('--ext_col_sumstats'), action='store', type='character', help='.json file defining columns to use from the extarnal sumstats', default = '/home/soumick.chatterjee/Codes/GitLab/tricorder/PRS/davide_fede/sumcols_UKBB_regenie.json'),
+  make_option(c('-o', '--output'), action='store', type='character', help='output prefix [required]', default="/group/glastonbury/soumick/PRS/CnT/initial_test_FreqFilt_extGWAS_S1701_Z49"),
+  make_option(c('--ext_sumstats'), action='store', type='character', help='[Only if filtered is 1 and selectSNPs is not supplied] Path to external sumstats. In this case, GWAS will not be performed and the top SNPs from the sumstats will be considered', default = '/group/glastonbury/GWAS/F20208v3_DiffAE/select_latents_r80/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/results/gwas/S1701_Z49.gwas.regenie.gz'),
+  make_option(c('--ext_col_sumstats'), action='store', type='character', help='[Only if filtered is 1 and ext_sumstats is supplied] .json file defining columns to use from the extarnal sumstats', default = '/home/soumick.chatterjee/Codes/GitLab/tricorder/PRS/davide_fede/sumcols_UKBB_regenie.json'),
+  make_option(c('--filtAF'), action='store', type='numeric', help='[Only if filtered is 1 and ext_sumstats is supplied] Filter sumstats to remove SNPs with MAF < 0.01', default=1),
   make_option(c('--threads'), action='store', type='numeric', help='computing threads [1]', default=5),
   make_option(c('--seed'), action='store', type='numeric', help='set seed (to be used for train-test split', default=1701),
   make_option(c('-t', '--train'), action='store', type='double', help='train percentage for training-testing - internal validation', default = 0.8)
@@ -115,6 +115,7 @@ if (is_bgen) {
   obj.bigSNP$fam$sample.ID <- obj.sample$ID_2
 }
 
+rsIDs <- obj.bigSNP$map$rsid
 CHR <- as.integer(obj.bigSNP$map$chromosome) #this is somehow necessary for .bgen files, not for bed
 POS <- obj.bigSNP$map$physical.pos
 
@@ -146,25 +147,29 @@ pred.base <- predict(mod.base, data.full)
 now<-Sys.time()
 message('[',now,'][Message] baseline model ready')
 
-#how many tophits to consider
-if(opt$tophits <= 1) {
-  n_ind_max <- ceiling(opt$tophits * length(CHR)) 
-} else {
-  n_ind_max <- opt$tophits
-}
-
 #check if external sumstats are supplied, perform GWAS if not
 if (!is.null(opt$ext_sumstats)){
 
   message('[',now,'][Message] external sumstats supplied, loading the sumstats. GWAS will not be performed.')
   stats<-load_summary(opt$ext_sumstats, opt$ext_col_sumstats, opt$threads)
   sumstats<-stats[[1]]
-  genotype_keys <- paste(CHR, POS, sep = "-")
-  sumstats_keys <- paste(sumstats$chr, sumstats$pos, sep = "-")
-  matched_indices <- match(genotype_keys, sumstats_keys)
-  matched_sumstats <- sumstats[na.omit(matched_indices), ]
-  sumstats_ordered <- sumstats[match(genotype_keys, sumstats_keys), ]
-  sumstats_ordered <- na.omit(sumstats_ordered)
+
+  matched_indices <- match(rsIDs, sumstats$rsid)
+  sumstats_ordered <- sumstats[na.omit(matched_indices), ]
+      
+  if (opt$filtAF == 1){
+    
+    sumstats_ordered <- subset(sumstats_ordered, a1freq > 0.01)
+    include_SNPs <- na.omit(match(sumstats_ordered$rsid, rsIDs))
+    CHR <- CHR[include_SNPs]
+    POS <- POS[include_SNPs]
+    exclude_SNPs <- which(is.na(match(rsIDs, sumstats_ordered$rsid)))
+    
+  } else {
+  
+    exclude_SNPs <- NULL
+  
+  }
   
   gwas <- data.frame(score = sumstats_ordered$beta / sumstats_ordered$beta_se, estim = sumstats_ordered$beta)
   if ('mlog10p' %in% names(sumstats_ordered)) {
@@ -203,12 +208,16 @@ calc_prs_CT <- function(ind.prs, data.prs) {
   res_CT <- lapply(c(0.05, 0.2, 0.8), function(thr.r2) {
     ind.keep <- snp_clumping(G, infos.chr = CHR, ind.row = ind.prs,
                              thr.r2 = thr.r2, S = abs(gwas$score), size = 500,
-                             is.size.in.bp = TRUE, infos.pos = POS, ncores = opt$threads)
+                             is.size.in.bp = TRUE, infos.pos = POS, ncores = opt$threads, exclude = exclude_SNPs)
+    
     thrs <- c(0, -log10(5e-08), exp(seq(log(0.1), log(100), length.out = 100)))
     prs <- snp_PRS(G, betas.keep = gwas$estim[ind.keep],
                    ind.test = ind.prs, ind.keep = ind.keep, lpS.keep = lpS[ind.keep],
                    thr.list = thrs)
-    ind.best <- which.max(apply(prs, 2, cor, data.prs[[opt$pheno_col]]))
+    
+    ind.best <- which.max(apply(prs[, 3:ncol(prs)], 2, function(x) cor(x, data.prs[[opt$pheno_col]])^2)) #we don't want to consider PRS-all and PRS-stringent into the PRS-max calculation
+    ind.best <- ind.best + 2 #because we skipped PRS-all and PRS-stringent
+    
     methods <- c("PRS-all", "PRS-stringent", "PRS-max")
     indices <- c(1:2, ind.best)
     lapply(1:3, function(i) {
@@ -227,6 +236,7 @@ calc_prs_CT <- function(ind.prs, data.prs) {
                                             COVAR = I(covar_from_df(data.prs[, c(cov_cols, cov_PC_cols)]))))
     summary(mylm)$r.squared
   })
+  res_CT$ind_prsmax <- ind.best
   res_CT$r.squared <- unlist(cor_per_method)
   res_CT
 }
