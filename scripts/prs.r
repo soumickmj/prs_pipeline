@@ -138,18 +138,37 @@ check_correlation<-function(x) {
 # create the list with all necessary files
 options(warn = -1)
 
+# option_list = list(
+#   make_option(c('-m', '--model'), action='store', type='character', help='model to use, either automatic or grid. Default to automatic', default='automatic'),
+#   make_option(c('-i', '--input'), action='store', type='character', help='.bed file (with companion .bim and .fam files) or (indexed) .bgen file [required]'),
+#   make_option(c('-s', '--summary'), action='store', type='character', help='GWAS summary stats or pre-calculated .tsv (with header) containing beta scores [required]'),
+#   make_option(c('--summarycols'), action='store', type='character', help='.json file defining columns to use'),
+#   make_option(c('--filter_SNPs'), action='store', type='character', help='.txt file containing a list of SNPs to be used to filter the summary stats and used in the analysis'),
+#   make_option(c('-p', '--phenotype'), action='store', type='character', help='.tsv file with phenotype (first 2 columns could be FID and IID, 3rd column should be the phenotype. If more than 1 phenotype is present, specify the column to be considered using pheno_col)'),
+#   make_option(c('--pheno_col'), action='store', type='character', help='If phenotype is provided, but contains more than 1 phenotype, the phenotype that is to be used can be specified here.'),
+#   make_option(c('-c', '--covariates'), action='store', type='character', help='.tsv file with covariates (first 2 columns could be FID and IID, 3rd column onwards will be considered as covariates.) If both phenotype and covariates are supplied, first 2 columns must match.'),
+#   make_option(c('--heritability'), action='store', type='numeric', help='heritability, if known'),
+#   make_option(c('-o', '--output'), action='store', type='character', help='output prefix [required]'),
+#   make_option(c('--threads'), action='store', type='numeric', help='computing threads [1]', default=1),
+#   make_option(c('--correlation'), action='store', type='character', help='the correlation matrix provided as a pre-computed .rds object'),
+#   make_option(c('--reference'), action='store', type='character', help='reference panel in .rds format'),
+#   make_option(c('--index'), action='store', type='character', help='indexes for the individuals in the reference panel in .tsv format')
+#   #make_option(c('-t', '--train'), action='store', type='character', help='train percentage for training-testing - internal validation'),
+#   #make_option(c('-x', '--external'), action='store', type='character', help='external validation set. Comma-separated .bed (or .bgen) and .pheno tsv. .bed should have accompanying .bim and .fam')
+# )
+
 option_list = list(
   make_option(c('-m', '--model'), action='store', type='character', help='model to use, either automatic or grid. Default to automatic', default='automatic'),
-  make_option(c('-i', '--input'), action='store', type='character', help='.bed file (with companion .bim and .fam files) or (indexed) .bgen file [required]'),
-  make_option(c('-s', '--summary'), action='store', type='character', help='GWAS summary stats or pre-calculated .tsv (with header) containing beta scores [required]'),
-  make_option(c('--summarycols'), action='store', type='character', help='.json file defining columns to use'),
-  make_option(c('--filter_SNPs'), action='store', type='character', help='.txt file containing a list of SNPs to be used to filter the summary stats and used in the analysis'),
-  make_option(c('-p', '--phenotype'), action='store', type='character', help='.tsv file with phenotype (first 2 columns could be FID and IID, 3rd column should be the phenotype. If more than 1 phenotype is present, specify the column to be considered using pheno_col)'),
-  make_option(c('--pheno_col'), action='store', type='character', help='If phenotype is provided, but contains more than 1 phenotype, the phenotype that is to be used can be specified here.'),
-  make_option(c('-c', '--covariates'), action='store', type='character', help='.tsv file with covariates (first 2 columns could be FID and IID, 3rd column onwards will be considered as covariates.) If both phenotype and covariates are supplied, first 2 columns must match.'),
+  make_option(c('-i', '--input'), action='store', type='character', help='.bed file (with companion .bim and .fam files) or (indexed) .bgen file [required]', default='/group/glastonbury/soumick/PRS/inputs/F20208v3_DiffAE_select_latents_r80_discov_INF30/conv_cond_plus_plink_maf1p_geno10p_prune_250_5_r0p5_ukbb_autosomes_mac100_info0p4.bgen'),
+  make_option(c('-s', '--summary'), action='store', type='character', help='GWAS summary stats or pre-calculated .tsv (with header) containing beta scores [required]', default='/group/glastonbury/GWAS/F20208v3_DiffAE/select_latents_r80/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/results/gwas/S1701_Z49.gwas.regenie.gz'),
+  make_option(c('--summarycols'), action='store', type='character', help='.json file defining columns to use', default='/home/soumick.chatterjee/Codes/GitLab/tricorder/PRS/davide_fede/sumcols_UKBB_regenie.json'),
+  make_option(c('--filter_SNPs'), action='store', type='character', help='.txt file containing a list of SNPs to be used to filter the summary stats and used in the analysis', default ='/group/glastonbury/soumick/PRS/inputs/F20208v3_DiffAE_select_latents_r80_discov_INF30/cond_plus_plink_maf1p_geno10p_prune_250_5_r0p5_ukbb_autosomes_mac100_info0p4.txt'),
+  make_option(c('-p', '--phenotype'), action='store', type='character', help='.tsv file with phenotype (first 2 columns could be FID and IID, 3rd column should be the phenotype. If more than 1 phenotype is present, specify the column to be considered using pheno_col)', default = '/group/glastonbury/GWAS/F20208v3_DiffAE/select_latents_r80/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/validated_input/processed.pheno.validated.txt'),
+  make_option(c('--pheno_col'), action='store', type='character', help='If phenotype is provided, but contains more than 1 phenotype, the phenotype that is to be used can be specified here.', default='S1701_Z49'),
+  make_option(c('-c', '--covariates'), action='store', type='character', help='.tsv file with covariates (first 2 columns could be FID and IID, 3rd column onwards will be considered as covariates.)', default = '/group/glastonbury/GWAS/F20208v3_DiffAE/select_latents_r80/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/validated_input/cov_newset_chp_F20208_Long_axis_heart_images_DICOM_H5v3_NOnoise.cov.validated.txt'),
   make_option(c('--heritability'), action='store', type='numeric', help='heritability, if known'),
-  make_option(c('-o', '--output'), action='store', type='character', help='output prefix [required]'),
-  make_option(c('--threads'), action='store', type='numeric', help='computing threads [1]', default=1),
+  make_option(c('-o', '--output'), action='store', type='character', help='output prefix [required]', default='/group/glastonbury/soumick/PRS/davide_fede/initial_test_S1701_Z49_ldprune_prova'),
+  make_option(c('--threads'), action='store', type='numeric', help='computing threads [1]', default=10),
   make_option(c('--correlation'), action='store', type='character', help='the correlation matrix provided as a pre-computed .rds object'),
   make_option(c('--reference'), action='store', type='character', help='reference panel in .rds format'),
   make_option(c('--index'), action='store', type='character', help='indexes for the individuals in the reference panel in .tsv format')

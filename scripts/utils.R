@@ -202,7 +202,7 @@ load_bed<-function(x, threads) {
 }
 
 
-load_bgen<-function(x,threads,subset_subIDs=NULL) {
+load_bgen<-function(x,threads,subset_subIDs=NULL, rsIDs=NULL) {
   
   now<-Sys.time()
   message('[',now,'][Message] reading .bgen file')
@@ -217,6 +217,9 @@ load_bgen<-function(x,threads,subset_subIDs=NULL) {
   if (!is.null(subset_subIDs)) {
 
     subset_digest <- digest(subset_subIDs)
+    if (!is.null(rsIDs)) {
+      subset_digest <- paste(subset_digest, digest(rsIDs), sep="_")
+    }
 
     subset_bk_file <- file.path(str_replace(bk_file, ".bk", paste0(".subset.", subset_digest, ".bk")))
     subset_rds_file <- file.path(str_replace(rds_file, ".rds", paste0(".subset.", subset_digest, ".rds")))
@@ -225,6 +228,10 @@ load_bgen<-function(x,threads,subset_subIDs=NULL) {
     if (!file.exists(subset_bk_file)) { 
         
       bgi<-snp_readBGI(bgi_file,snp_id=NULL)
+      if (!is.null(rsIDs)) {
+        message('[',now,'][Message] subsetting BGEN file to only include the supplied rsIDs')
+        bgi <- bgi[bgi$rsid %in% rsIDs, ]
+      }
       snps_ids<-list(paste(bgi$chromosome, bgi$position, bgi$allele1, bgi$allele2, sep="_")) #do we want this or an external table?
       sampleIDs<-fread2(sample_file)[-1, ]$ID_2
       ind_row<-sort(match(subset_subIDs, sampleIDs))
@@ -244,6 +251,10 @@ load_bgen<-function(x,threads,subset_subIDs=NULL) {
     if (!file.exists(bk_file)) {
 
       bgi<-snp_readBGI(bgi_file,snp_id=NULL)
+      if (!is.null(rsIDs)) {
+        message('[',now,'][Message] subsetting BGEN file to only include the supplied rsIDs')
+        bgi <- bgi[bgi$rsid %in% rsIDs, ]
+      }
       snps_ids<-list(paste(bgi$chromosome, bgi$position, bgi$allele1, bgi$allele2, sep="_")) #do we want this or an external table?
       snp_readBGEN(bgen_file, backingfile=backing_file, list_snp_id=snps_ids, ncores=threads, read_as ="dosage")
 
@@ -430,4 +441,43 @@ load_covPC<-function(x, nPC=NULL) {
   covPC <- na.omit(covPC)
   covPC
   
+}
+
+custom_snp_match<-function(sumstats_ordered, map, join_by_pos = FALSE) {
+  
+  now<-Sys.time()
+  
+  message('[',now,'][Message] ',nrow(sumstats_ordered),' SNPs present in the sumstats')
+  message('[',now,'][Message] ',nrow(map),' SNPs present in the genotypes file')
+  
+  sumstats_ordered$chr <- as.character(sumstats_ordered$chr)
+  map$chr <- as.character(map$chr)
+  sumstats_ordered$pos <- as.integer(sumstats_ordered$pos)
+  map$pos <- as.integer(map$pos)
+  
+  if (join_by_pos) {
+    matched_snps <- merge(sumstats_ordered, map, by = c("chr", "pos"), suffixes = c(".ss", ""))
+  } else {
+    matched_snps <- merge(sumstats_ordered, map, by = "rsid", suffixes = c(".ss", ""))
+  }
+  message('[',now,'][Message] ',nrow(matched_snps),' SNPs matched')
+  
+  matched_snps$`_NUM_ID_.ss` <- seq_len(nrow(sumstats_ordered))[match(matched_snps$rsid, sumstats_ordered$rsid)]
+  matched_snps$`_NUM_ID_` <- seq_len(nrow(map))[match(matched_snps$rsid, map$rsid)]
+  
+  needs_flipping <- with(matched_snps, a1.ss == a0 & a0.ss == a1)
+  message('[',now,'][Message] ',sum(needs_flipping),' SNPs need to be flipped')
+  matched_snps$a1[needs_flipping] <- matched_snps$a0[needs_flipping]
+  matched_snps$a0[needs_flipping] <- matched_snps$a1.ss[needs_flipping]
+  
+  matched_snps_final <- matched_snps[c("chr.ss", "rsid", "a0.ss", "a1.ss", "pos.ss", "a1freq", "beta", 
+                                       "mlog10p", "n_eff", "beta_se", "p", "maf", "key", "_NUM_ID_.ss", 
+                                       "pos", "_NUM_ID_")]
+  colnames(matched_snps_final) <- c("chr", "rsid", "a0", "a1", "pos.ss", "a1freq", "beta", 
+                                    "mlog10p", "n_eff", "beta_se", "p", "maf", "key", "_NUM_ID_.ss", 
+                                    "pos", "_NUM_ID_")
+  
+  matched_snps_final <- matched_snps_final[order(as.integer(matched_snps_final$chr), matched_snps_final$pos), ]
+  
+  matched_snps_final
 }

@@ -15,14 +15,10 @@ option_list = list(
   make_option(c('--cov_PC'), action='store', type='character', help=".rds file containing the principal components of the genotype. If supplied, this will be used during the training of the sparse linear regression model.", default = "/project/ukbblatent/clinicaldata/v1.1.0_seventh_basket/genPC_82779_MD_01_03_2024_00_05_30.tsv"),
   make_option(c('--cov_nPC'), action='store', type='numeric', help='Number of PCs to include from the supplied cov_PC (Default: 20, same as the PLR code]', default=20),
   make_option(c('--subs2include'), action='store', type='character', help='txt file (or, output of plink) with FID and IID columns (tab-separated), containing subjects to include (typically used for relatedness filtering)', default='/group/glastonbury/soumick/PRS/inputs/F20208v3_DiffAE_select_latents_r80_discov_INF30/king_cutoff_0p0625_cond_plus_plink_maf1p_geno10p_caucasian_prune_250_5_r0p5_ukbb_autosomes_mac100_info0p4.king.cutoff.in.id'),
-  make_option(c('-o', '--output'), action='store', type='character', help='output prefix [required]', default="/group/glastonbury/soumick/PRS/filteredPLR/initial_exGWAS_MfiltMAF_S1701_Z49"),
+  make_option(c('-o', '--output'), action='store', type='character', help='output prefix [required]', default="/group/glastonbury/soumick/PRS/CnT/initial_test_S1701_Z49"),
   make_option(c('--tophits'), action='store', type='double', help='Number (if the provided value is greater than 1) or percentage (of total number of SNPs) of GWAS tophits will be utilised for the main model. Orignal PLR code uses 100e3 (out of 656e3, i.e. 15.24%)', default = 100e3),
-  make_option(c('--filtered'), action='store', type='numeric', help='Whether or not to perform GWAS-driven SNP filtering [Default: 1]', default=1),
-  make_option(c('--selectSNPs'), action='store', type='character', help='[Only if filtered is 1] specify path to a .csv or .tsv file containing the CHR and POS of the selected SNPs. If not supplied, GWAS-driven filtering will be performed.'),
-  make_option(c('--col_selectSNPs'), action='store', type='character', help='[Only if filtered is 1 and selectSNPs is supplied] Coma sperated list of column names in the selectSNPs file containing CHR and POS', default = 'Chr,bp'),
-  make_option(c('--ext_sumstats'), action='store', type='character', help='[Only if filtered is 1 and selectSNPs is not supplied] Path to external sumstats. In this case, GWAS will not be performed and the top SNPs from the sumstats will be considered', default = '/group/glastonbury/GWAS/F20208v3_DiffAE/select_latents_r80/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/nNs_Qntl_INF30_DiffAE128_5Sd_r80_discov_fullDSV3/results/gwas/S1701_Z49.gwas.regenie.gz'),
-  make_option(c('--ext_col_sumstats'), action='store', type='character', help='[Only if filtered is 1 and ext_sumstats is supplied] .json file defining columns to use from the extarnal sumstats', default = '/home/soumick.chatterjee/Codes/GitLab/tricorder/PRS/davide_fede/sumcols_UKBB_regenie.json'),
-  make_option(c('--filtAF'), action='store', type='numeric', help='[Only if filtered is 1 and ext_sumstats is supplied] Filter sumstats to remove SNPs with MAF < 0.01', default=1),
+  make_option(c('--ext_sumstats'), action='store', type='character', help='Path to external sumstats. In this case, GWAS will not be performed and the top SNPs from the sumstats will be considered'),
+  make_option(c('--ext_col_sumstats'), action='store', type='character', help='.json file defining columns to use from the extarnal sumstats', default = '/home/soumick.chatterjee/Codes/GitLab/tricorder/PRS/davide_fede/sumcols_UKBB_regenie.json'),
   make_option(c('--threads'), action='store', type='numeric', help='computing threads [1]', default=5),
   make_option(c('--seed'), action='store', type='numeric', help='set seed (to be used for train-test split', default=1701),
   make_option(c('-t', '--train'), action='store', type='double', help='train percentage for training-testing - internal validation', default = 0.8)
@@ -119,7 +115,6 @@ if (is_bgen) {
   obj.bigSNP$fam$sample.ID <- obj.sample$ID_2
 }
 
-rsIDs <- obj.bigSNP$map$rsid
 CHR <- as.integer(obj.bigSNP$map$chromosome) #this is somehow necessary for .bgen files, not for bed
 POS <- obj.bigSNP$map$physical.pos
 
@@ -151,145 +146,114 @@ pred.base <- predict(mod.base, data.full)
 now<-Sys.time()
 message('[',now,'][Message] baseline model ready')
 
-if (opt$filtered == 1){
+#how many tophits to consider
+if(opt$tophits <= 1) {
+  n_ind_max <- ceiling(opt$tophits * length(CHR)) 
+} else {
+  n_ind_max <- opt$tophits
+}
+
+#check if external sumstats are supplied, perform GWAS if not
+if (!is.null(opt$ext_sumstats)){
+
+  message('[',now,'][Message] external sumstats supplied, loading the sumstats. GWAS will not be performed.')
+  stats<-load_summary(opt$ext_sumstats, opt$ext_col_sumstats, opt$threads)
+  sumstats<-stats[[1]]
+  genotype_keys <- paste(CHR, POS, sep = "-")
+  sumstats_keys <- paste(sumstats$chr, sumstats$pos, sep = "-")
+  matched_indices <- match(genotype_keys, sumstats_keys)
+  matched_sumstats <- sumstats[na.omit(matched_indices), ]
+  sumstats_ordered <- sumstats[match(genotype_keys, sumstats_keys), ]
+  sumstats_ordered <- na.omit(sumstats_ordered)
   
-  if (!is.null(opt$selectSNPs)){
-    
-    message('[',now,'][Message] restricting the analysis to the provided SNPs')
-    
-    if (tolower(file_ext(opt$selectSNPs)) == "csv") {
-      selectSNPs <- read.csv(opt$selectSNPs)
-    }  else {
-      selectSNPs <- read.table(opt$selectSNPs)
-    }
-    cols_selectSNPs <- strsplit(opt$col_selectSNPs, ",")[[1]]
-    
-    genotype_keys <- paste(CHR, POS, sep = "-")
-    selectSNPs_keys <- paste(selectSNPs[[cols_selectSNPs[1]]], selectSNPs[[cols_selectSNPs[2]]], sep = "-")
-    
-    matched_indices <- unique(unlist(lapply(selectSNPs_keys, function(key) which(genotype_keys == key))))
-    ind.max <- na.omit(matched_indices)
-    
+  gwas <- data.frame(score = sumstats_ordered$beta / sumstats_ordered$beta_se, estim = sumstats_ordered$beta)
+  if ('mlog10p' %in% names(sumstats_ordered)) {
+    lpS <- sumstats_ordered$mlog10p
   } else {
-
-    message('[',now,'][Message] performing GWAS-driven SNP filtering')
-  
-    #how many tophits to consider
-    if(opt$tophits <= 1) {
-        n_ind_max <- ceiling(opt$tophits * length(CHR)) 
-    } else {
-      n_ind_max <- opt$tophits
-    }
-  
-    #check if external sumstats are supplied, perform GWAS if not
-    if (!is.null(opt$ext_sumstats)){
-  
-      message('[',now,'][Message] external sumstats supplied, loading the sumstats. GWAS will not be performed.')
-      stats<-load_summary(opt$ext_sumstats, opt$ext_col_sumstats, opt$threads)
-      sumstats<-stats[[1]]
-    
-      matched_indices <- match(rsIDs, sumstats$rsid)
-      sumstats_ordered <- sumstats[na.omit(matched_indices), ]
-      
-      if (opt$filtAF == 1){
-        
-        sumstats_ordered_filtered <- subset(sumstats_ordered, a1freq > 0.01)
-        ind.filt.max <- order(sumstats_ordered_filtered$p)[1:n_ind_max]
-        sumstats_ordered_filtered_max <- sumstats_ordered_filtered[ind.filt.max,]
-        ind.max <- na.omit(match(sumstats_ordered_filtered_max$rsid, rsIDs))
-        
-      } else {
-      
-        ind.max <- order(sumstats_ordered$p)[1:n_ind_max]
-      
-      }
-  
-    } else {
-  
-      message('[',now,'][Message] performing GWAS')
-      gwas <- big_univLinReg(X = G, 
-                            y.train = data.train[[opt$pheno_col]],
-                            ind.train = ind.train,
-                            covar.train = covar_from_df(data.train[, c(cov_cols, cov_PC_cols)]),
-                            ncores = opt$threads)
-      saveRDS(gwas, file=file.path(paste0(opt$output, ".gwas.rds")))
-  
-      pdf(file.path(paste0(opt$output,'.gwas.pdf')))
-      lpval <- -predict(gwas)
-      hist(log(lpval))  
-  
-      ind.max <- order(predict(gwas))[1:n_ind_max]
-      snp_manhattan(gwas, CHR, POS, npoints = 20e3, ind.highlight = ind.max)
-      dev.off()
-  
-      now<-Sys.time()
-      message('[',now,'][Message] GWAS done')
-    }
+    lpS <- -log10(sumstats_ordered$p)
   }
+
 } else {
+
+  message('[',now,'][Message] performing GWAS')
+  gwas <- big_univLinReg(X = G,
+                        y.train = data.train[[opt$pheno_col]],
+                        ind.train = ind.train,
+                        covar.train = covar_from_df(data.train[, c(cov_cols, cov_PC_cols)]),
+                        ncores = opt$threads)
+  saveRDS(gwas, file=file.path(paste0(opt$output, ".gwas.rds")))
+
+  pdf(file.path(paste0(opt$output,'.gwas.pdf')))
+  lpval <- -predict(gwas)
+  hist(log(lpval))
+
+  lpvals <- predict(gwas)
+  lpS <- -lpvals
+
+  ind.max <- order(lpvals)[1:n_ind_max]
+
+  snp_manhattan(gwas, CHR, POS, npoints = 20e3, ind.highlight = ind.max)
+  dev.off()
+
+  now<-Sys.time()
+  message('[',now,'][Message] GWAS done')
+}
+
+calc_prs_CT <- function(ind.prs, data.prs) {
+  res_CT <- lapply(c(0.05, 0.2, 0.8), function(thr.r2) {
+    ind.keep <- snp_clumping(G, infos.chr = CHR, ind.row = ind.prs,
+                             thr.r2 = thr.r2, S = abs(gwas$score), size = 500,
+                             is.size.in.bp = TRUE, infos.pos = POS, ncores = opt$threads)
+    thrs <- c(0, -log10(5e-08), exp(seq(log(0.1), log(100), length.out = 100)))
+    prs <- snp_PRS(G, betas.keep = gwas$estim[ind.keep],
+                   ind.test = ind.prs, ind.keep = ind.keep, lpS.keep = lpS[ind.keep],
+                   thr.list = thrs)
+    ind.best <- which.max(apply(prs, 2, cor, data.prs[[opt$pheno_col]]))
+    methods <- c("PRS-all", "PRS-stringent", "PRS-max")
+    indices <- c(1:2, ind.best)
+    lapply(1:3, function(i) {
+      k <- indices[i]
+      tibble(
+        method = methods[i],
+        pred = list(prs[, k]),
+        thr.r2 = thr.r2,
+        set = list(intersect(ind.keep, which(lpS > thrs[k])))
+      )
+    }) %>% bind_rows()
+  }) %>% bind_rows()
   
-  ind.max <- cols_along(G) #i.e. use all the SNPs
+  cor_per_method <- lapply(res_CT$pred, function(pred) {
+    mylm <- lm(y ~ pred + COVAR, data.frame(pred, y = data.prs[[opt$pheno_col]],
+                                            COVAR = I(covar_from_df(data.prs[, c(cov_cols, cov_PC_cols)]))))
+    summary(mylm)$r.squared
+  })
+  res_CT$r.squared <- unlist(cor_per_method)
+  res_CT
+}
+
+#on the test set, only if GWAS was performed on the fly on the train set
+if (is.null(opt$ext_sumstats)){
+  
+  now<-Sys.time()
+  message('[',now,'][Message] performing C+T on the test set, as GWAS was performed on the fly on the train set')
+  
+  res_CT_test <- calc_prs_CT(ind.test, data.test)
+  saveRDS(res_CT_test, file=file.path(paste0(opt$output, ".rsCT.test.rds")))
+  
+  output <- capture.output(print(res_CT_test))
+  writeLines(output, file.path(paste0(opt$output, ".rsCT.test.results.txt")))
   
 }
 
-#Train the Sparse linear regression model
-if (is.null(opt$cov_PC)){
-  mod <- big_spLinReg(X = G, 
-                      y.train = data.train[[opt$pheno_col]], 
-                      ind.train = ind.train,
-                      ind.col = ind.max,
-                      base.train = pred.base[ind.train],
-                      dfmax = Inf,
-                      ncores = opt$threads)
-  pred.mod.train <- predict(mod, G,  ind.row = ind.train, base.row = pred.base[ind.train])
-  pred.mod.test <- predict(mod, G,  ind.row = ind.test, base.row = pred.base[ind.test])
-} else {
-  cov.PC.train <- covar_from_df(data.train[, cov_PC_cols])
-  cov.PC.test <- covar_from_df(data.test[, cov_PC_cols])
-  mod <- big_spLinReg(X = G, 
-                      y.train = data.train[[opt$pheno_col]], 
-                      ind.train = ind.train,
-                      ind.col = ind.max,
-                      covar.train = cov.PC.train,
-                      base.train = pred.base[ind.train],
-                      dfmax = Inf,
-                      ncores = opt$threads)
-  pred.mod.train <- predict(mod, G, ind.row = ind.train, covar.row = cov.PC.train, base.row = pred.base[ind.train])
-  pred.mod.test <- predict(mod, G, ind.row = ind.test, covar.row = cov.PC.test, base.row = pred.base[ind.test])
-}
+#on the full set
+now<-Sys.time()
+message('[',now,'][Message] performing C+T on the whole dataset')
 
-saveRDS(list(mod=mod,mode.base=mod.base), file=file.path(paste0(opt$output, ".mod.rds")))
+res_CT_full <- calc_prs_CT(seq(1, length(ind.subIDs)), data.full)
+saveRDS(res_CT_full, file=file.path(paste0(opt$output, ".rsCT.fullDS.rds")))
 
-pdf(file.path(paste0(opt$output,'.mod.pdf')))
-plot(mod)
-dev.off()
+output <- capture.output(print(res_CT_full))
+writeLines(output, file.path(paste0(opt$output, ".rsCT.fullDS.results.txt")))
 
-sink(file.path(paste0(opt$output,'.summary.mod.txt')))
-summary(mod)
-sink()
-
-pred.combo.train <- pred.base[ind.train] + pred.mod.train
-pred.combo.test <- pred.base[ind.test] + pred.mod.test
-
-data.train$Pred_base <- pred.base[ind.train]
-data.train$PRS_PLR <- pred.mod.train
-data.train$PRS_PLRbase <- pred.combo.train
-saveRDS(data.full, file=file.path(paste0(opt$output, ".pred.train.rds")))
-
-data.test$Pred_base <- pred.base[ind.test]
-data.test$PRS_PLR <- pred.mod.test
-data.test$PRS_PLRbase <- pred.combo.test
-saveRDS(data.full, file=file.path(paste0(opt$output, ".pred.test.rds")))
-
-data.full <- rbind(data.train, data.test)
-saveRDS(data.full, file=file.path(paste0(opt$output, ".pred.rds")))
-
-writeLines(sprintf(
-  "R^2 scores:::\nBaseline: ---\nTrain: %f\nTest: %f\nPLR: ---\nTrain: %f\nTest: %f\nCombo: ---\nTrain: %f\nTest: %f",
-  cor(pred.base[ind.train], data.train[[opt$pheno_col]])^2, # Train Baseline
-  cor(pred.base[ind.test], data.test[[opt$pheno_col]])^2, # Test Baseline
-  cor(pred.mod.train, data.train[[opt$pheno_col]])^2, # Train PLR
-  cor(pred.mod.test, data.test[[opt$pheno_col]])^2, # Test PLR
-  cor(pred.combo.train, data.train[[opt$pheno_col]])^2, # Train Combo
-  cor(pred.combo.test, data.test[[opt$pheno_col]])^2 # Test Combo
-), file.path(paste0(opt$output,'.scores.txt')))
+now<-Sys.time()
+message('[',now,'][Message] done')
